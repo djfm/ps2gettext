@@ -36,8 +36,13 @@ module PS2Gettext
 			}
 		end
 
+		def whitelisted file
+			true
+		end
+
 		def convert path
 			Find.find path do |file|
+				continue unless whitelisted file
 				# Get path relative to path argument, make sure it starts with a '/'.
 				rel_path = (rel_path=file[path.length..-1])[0] == '/' ? rel_path : "/#{rel_path}" 
 				begin
@@ -107,23 +112,87 @@ module PS2Gettext
 			end
 		end
 
+		def guess_domain params
+			if params[:construct] == 'Tools::displayError'
+				return 'errors'
+			elsif params[:construct] == 'Translate::getAdminTranslation'
+				return 'admin'
+			elsif params[:construct] == 'Mail::l'
+				return 'mails'
+			end
+
+			if theme=params[:file][/\/themes\/([^\/]+)\//, 1]
+				return "theme-#{theme}"
+			end
+
+			if (not params[:file]=~/\/modules/) and params[:file]=~/\/classes\//
+				return 'admin'
+			end
+
+			if params[:file]=~/\/controllers\/admin\//
+				return 'admin'
+			end
+
+			if params[:file]=~/\/install-dev\//
+				return 'installer'
+			end
+
+			if mod=params[:file][/\/modules\/([^\/]+)\//, 1]
+				return "module-#{mod}"
+			end
+
+			if params[:ext] == '.tpl' and params[:args]['pdf']
+				return 'pdfs'
+			end
+
+			if params[:file]=~/\/pdf\//
+				return 'pdfs'
+			end
+
+			#root of all themes dir
+			if params[:file]=~/\/themes\//
+				return 'themes'
+			end
+
+			abort "No domain could be inferred from #{params}"
+
+			''
+		end
+
+		def valid_call params
+			if params[:file]=~/\/controllers\/front\// and params[:construct] == "$this->l"
+				return false
+			end
+			true
+		end
+
 		def rewrite params
-			@ops << params
+			if valid_call params
+				params.merge!(:domain => guess_domain(params))
+				params.merge!(:transformed => transform(params))
+				@ops << params
+			end
+		end
+
+		def transform params
+
 		end
 
 		def dump_excel
 			wb = WriteExcel.new "rewrites.xls"
 			ws = wb.add_worksheet
 			row = 0
-			ws.write(row, 0, %w(Ext File Construct Args Match))
+			ws.write(row, 0, %w(Ext File Domain Construct Args Match Transformed))
 			@ops.each do |op|
 				row+=1
 				ws.write(row, 0, [
 					op[:ext],
 					op[:file],
+					op[:domain],
 					op[:construct],
 					op[:args],
-					op[:match]
+					op[:match],
+					op[:transformed]
 				])
 			end
 			wb.close
