@@ -179,11 +179,6 @@ module PS2Gettext
 				p = s.pos
 				m = s.scan_until x
 				if m
-					if s[0] == "$this->l('Choose language:')" and $debug
-						#puts s.string[p...(s.pos-s.matched_size)]
-						#puts m[0...-s.matched_size]
-						#abort "hey: #{s[0].size} #{s.matched_size} #{s.string[s.pos-10...s.pos]}"
-					end
 					out += m[0...-s.matched_size]+(replacements[s[0]])
 				else
 					out += s.rest

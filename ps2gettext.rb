@@ -368,7 +368,6 @@ module PS2Gettext
 
 			replacements.each_pair do |file, replacements|
 				puts "Processing #{file}..."
-				$debug = (file=="/var/www/psnt/classes/module/Module.php")
 				File.write(file, File.read(file).replace_all(replacements))
 			end
 		end
