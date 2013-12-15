@@ -148,4 +148,25 @@ class TestStringScanner < Test::Unit::TestCase
 		assert_equal e, r
 	end
 
+	def test_replace_all
+		str = "hello world"
+		r = str.replace_all 'hello' => 'yazoo'
+		e = 'yazoo world'
+		assert_equal e, r
+	end
+
+	def test_replace_all_2
+		str = "hell world"
+		r = str.replace_all 'hello' => 'yazoo'
+		e = 'hell world'
+		assert_equal e, r
+	end
+
+	def test_replace_all_3
+		str = "hello world hola hello"
+		str.replace_all! 'hello' => 'yazoo', 'hola' => 'spanish'
+		e = "yazoo world spanish yazoo"
+		assert_equal e, str
+	end
+
 end

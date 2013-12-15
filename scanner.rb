@@ -169,4 +169,33 @@ module PS2Gettext
 		end
 
 	end
+
+	class ::String
+		def replace_all replacements
+			out = ''
+			s = ::StringScanner.new self
+			x = Regexp.new(replacements.keys.map{|src| "(?:#{Regexp.escape(src)})"}.join('|'))
+			until s.eos?
+				p = s.pos
+				m = s.scan_until x
+				if m
+					if s[0] == "$this->l('Choose language:')" and $debug
+						#puts s.string[p...(s.pos-s.matched_size)]
+						#puts m[0...-s.matched_size]
+						#abort "hey: #{s[0].size} #{s.matched_size} #{s.string[s.pos-10...s.pos]}"
+					end
+					out += m[0...-s.matched_size]+(replacements[s[0]])
+				else
+					out += s.rest
+					break
+				end 
+			end
+			out
+		end
+
+		def replace_all! replacements
+			replace(replace_all replacements)
+			self
+		end
+	end
 end

@@ -4,6 +4,7 @@ require 'optparse'
 require 'strscan'
 require 'find'
 require 'writeexcel'
+require 'shellwords'
 
 require_relative 'scanner'
 
@@ -37,12 +38,13 @@ module PS2Gettext
 		end
 
 		def whitelisted file
+			return false if file=~/\/tools\//
 			true
 		end
 
 		def convert path
 			Find.find path do |file|
-				continue unless whitelisted file
+				next unless whitelisted file
 				# Get path relative to path argument, make sure it starts with a '/'.
 				rel_path = (rel_path=file[path.length..-1])[0] == '/' ? rel_path : "/#{rel_path}" 
 				begin
@@ -63,13 +65,9 @@ module PS2Gettext
 									if ws=scanner.scan(/\s+/)
 										match += ws
 									end
-
-									c = scanner.getch
-									if c == ')'
+									
+									if (c=scanner.getch) == ')'
 										match += c
-										if sc=scanner.scan(/\s+;/)
-											match += sc
-										end
 										rewrite({ 
 											:file => file,
 											:ext => ext,
@@ -110,6 +108,10 @@ module PS2Gettext
 					puts "Problem in file '#{file}': #{e}."
 				end
 			end
+
+			if @options[:for_real]
+				commit
+			end
 		end
 
 		def guess_domain params
@@ -123,6 +125,10 @@ module PS2Gettext
 
 			if theme=params[:file][/\/themes\/([^\/]+)\//, 1]
 				return "theme-#{theme}"
+			end
+
+			if params[:file]=~/\/pdf\//
+				return 'pdfs'
 			end
 
 			if (not params[:file]=~/\/modules/) and params[:file]=~/\/classes\//
@@ -145,10 +151,6 @@ module PS2Gettext
 				return 'pdfs'
 			end
 
-			if params[:file]=~/\/pdf\//
-				return 'pdfs'
-			end
-
 			#root of all themes dir
 			if params[:file]=~/\/themes\//
 				return 'themes'
@@ -167,15 +169,170 @@ module PS2Gettext
 		end
 
 		def rewrite params
+
+			params[:construct] = params[:construct].gsub(/\s+/, '')
+
 			if valid_call params
 				params.merge!(:domain => guess_domain(params))
 				params.merge!(:transformed => transform(params))
-				@ops << params
+
+				if params[:transformed]
+					@ops << params
+				end
+			end
+		end
+
+		def get_string str
+			if str.length >= 2 and str[0] == str[-1] and %w(' ").include?(str[0])
+				str[1...-1]
+			else
+				nil
 			end
 		end
 
 		def transform params
+			if params[:args].empty?
+				return nil
+			end
 
+			if params[:ext] == '.php'
+
+				return nil unless get_string(params[:args][0])
+					
+				if params[:domain] == 'admin'
+					if params[:construct] == '$this->l' or params[:construct] == 'Translate::getAdminTranslation'
+						#l($string, $class = null, $addslashes = false, $htmlentities = true)
+						#getAdminTranslation($string, $class = 'AdminTab', $addslashes = false, $htmlentities = true, $sprintf = null)
+						
+						sprintf = nil
+						htmlentities = true
+						addslashes = false
+
+						if slashes=params[:args][2]
+							if %w(true TRUE).include? slashes
+								addslashes = true
+							elsif %w(false FALSE null).include? slashes
+								addslashes = false
+							else
+								abort "addslashes: <#{slashes}>"
+							end
+						end
+
+						if entities=params[:args][3]
+							if %w(false FALSE).include? entities
+								htmlentities = false
+							else
+								abort "htmlentities: <#{entities}>"
+							end
+						end
+
+						options = {}
+						if addslashes
+							options['js'] = 'true'
+						end
+
+						if !htmlentities
+							options['allow_html'] = 'true'
+						end
+
+						if params[:args][3]
+							options['sprintf'] = params[:args][3]
+						end
+
+						optstr = options.empty? ? '' : (', array('+options.map{|k, v| "'#{k}' => #{v}"}.join(", ")+')')
+
+						return "__(#{params[:args][0]}, '#{params[:domain]}'#{optstr})"
+					end
+				end
+
+				if params[:construct] == 'Tools::displayError'
+					#displayError($string = 'Fatal error', $htmlentities = true, Context $context = null)
+					if get_string(params[:args][0])
+						
+						htmlentities = true
+						if entities=params[:args][1]
+							if %w(false FALSE).include? entities
+								htmlentities = false
+							else
+								htmlentities = "!#{entities}"
+								puts "htmlentities?? <#{entities}>"
+							end
+						end
+
+						options = {}
+						if !htmlentities
+							options['allow_html'] = 'true'
+						end
+						optstr = options.empty? ? '' : (', array('+options.map{|k, v| "'#{k}' => #{v}"}.join(", ")+')')
+
+						if params[:args][2]
+							abort "HAHA"
+						end
+
+						return "__(#{params[:args][0]}, '#{params[:domain]}'#{optstr})"
+					end
+				end
+
+				if params[:construct] == 'Mail::l'
+					lang = nil
+					if params[:args][1] and not %w(NULL null).include?(params[:args][1])
+						lang = params[:args][1]
+					end
+					if !lang and params[:args][2]
+						lang = params[:args][2]
+					end
+
+					lang = lang ? ", array('language' => #{lang})" : ''
+					return "__(#{params[:args][0]}, '#{params[:domain]}'#{lang})"
+				end
+
+				if params[:domain] == 'pdfs'
+					return "__(#{params[:args][0]}, '#{params[:domain]}')"
+				end
+
+				if params[:domain] == 'installer'
+					optstr = params[:args].length == 1 ? '' : ", array('sprintf' => array(#{params[:args][1..-1].join(", ")}))"
+					return "__(#{params[:args][0]}, '#{params[:domain]}'#{optstr})"
+				end
+
+				if params[:domain] =~ /^module\-/
+					return "__(#{params[:args][0]}, '#{params[:domain]}')"
+				end
+			
+			elsif params[:ext] == '.tpl'
+				if !params[:args]['s'] or !get_string(params[:args]['s'])
+					return nil
+				end
+
+				escape_html = true
+				escape_js = false
+
+				if js=params[:args]['js']
+					if js == '1'
+						escape_js = true
+					elsif js == '0'
+					else
+						abort "Js: <#{js}>"
+					end
+				end
+
+				if slashes=params[:args]['slashes']
+					if slashes == '1'
+						escape_js = true
+					else
+						abort "Slashes: <#{slashes}>"
+					end
+				end
+
+				js = escape_js ? ' js=1' : ''
+
+				sprintf = params[:args]['sprintf'] ? " sprintf=#{params[:args]['sprintf']}" : ''
+
+				return "{l s=#{params[:args]['s']}#{sprintf}#{js} d='#{params[:domain]}'}"
+
+			end
+
+			abort "Could not transform call #{params}"
 		end
 
 		def dump_excel
@@ -196,6 +353,24 @@ module PS2Gettext
 				])
 			end
 			wb.close
+		end
+
+		def sedscape str
+			str.gsub('/', '\/').gsub('\\', '\\\\').gsub('&', '\&').shellescape
+		end
+
+		def commit
+			replacements = Hash.new { |hash, key| hash[key] = Hash.new }
+
+			@ops.each do |op|
+				replacements[op[:file]][op[:match]] = op[:transformed]
+			end
+
+			replacements.each_pair do |file, replacements|
+				puts "Processing #{file}..."
+				$debug = (file=="/var/www/psnt/classes/module/Module.php")
+				File.write(file, File.read(file).replace_all(replacements))
+			end
 		end
 	end
 end
